@@ -9,6 +9,8 @@
 #include <SD.h>
 #include <TFT_eSPI.h>
 #include <WiFi.h>
+#include <HTTPClient.h>
+#include <WiFiClient.h>
 #include <XPT2046_Touchscreen.h>
 #include <time.h>
 
@@ -124,18 +126,20 @@ static const int CLOCK_FIELD_NAV_W = 56;
 static const int CLOCK_FIELD_NAV_H = 18;
 static const int CLOCK_STYLE_BUTTON_X = SETTINGS_PANEL_X + 92;
 static const int CLOCK_STYLE_BUTTON_W = 66;
-static const int CLOCK_STYLE_PANEL_X = 46;
-static const int CLOCK_STYLE_PANEL_Y = 54;
-static const int CLOCK_STYLE_PANEL_W = 228;
-static const int CLOCK_STYLE_PANEL_H = 176;
-static const int CLOCK_STYLE_CLOSE_X = CLOCK_STYLE_PANEL_X + CLOCK_STYLE_PANEL_W - 32;
+static const int CLOCK_STYLE_PANEL_X = 40;
+static const int CLOCK_STYLE_PANEL_Y = 24;
+static const int CLOCK_STYLE_PANEL_W = 240;
+static const int CLOCK_STYLE_PANEL_H = 208;
+static const int CLOCK_STYLE_CLOSE_X = CLOCK_STYLE_PANEL_X + CLOCK_STYLE_PANEL_W - 34;
 static const int CLOCK_STYLE_CLOSE_Y = CLOCK_STYLE_PANEL_Y + 8;
 static const int CLOCK_STYLE_CLOSE_W = 24;
-static const int CLOCK_STYLE_CLOSE_H = 22;
-static const int CLOCK_STYLE_ROW_1_Y = CLOCK_STYLE_PANEL_Y + 40;
-static const int CLOCK_STYLE_ROW_2_Y = CLOCK_STYLE_PANEL_Y + 74;
-static const int CLOCK_STYLE_ROW_3_Y = CLOCK_STYLE_PANEL_Y + 104;
-static const int CLOCK_STYLE_ROW_4_Y = CLOCK_STYLE_PANEL_Y + 134;
+static const int CLOCK_STYLE_CLOSE_H = 24;
+static const int CLOCK_STYLE_ROW_1_Y = CLOCK_STYLE_PANEL_Y + 36;
+static const int CLOCK_STYLE_ROW_2_Y = CLOCK_STYLE_PANEL_Y + 62;
+static const int CLOCK_STYLE_ROW_3_Y = CLOCK_STYLE_PANEL_Y + 88;
+static const int CLOCK_STYLE_ROW_4_Y = CLOCK_STYLE_PANEL_Y + 114;
+static const int CLOCK_STYLE_ROW_5_Y = CLOCK_STYLE_PANEL_Y + 140;
+static const int CLOCK_STYLE_ROW_6_Y = CLOCK_STYLE_PANEL_Y + 166;
 static const int CLOCK_STYLE_LABEL_X = CLOCK_STYLE_PANEL_X + 14;
 static const int CLOCK_STYLE_LEFT_X = CLOCK_STYLE_PANEL_X + 104;
 static const int CLOCK_STYLE_RIGHT_X = CLOCK_STYLE_PANEL_X + 164;
@@ -188,8 +192,8 @@ static const int WIFI_CLOSE_X = WIFI_PANEL_X + WIFI_PANEL_W - 32;
 static const int WIFI_CLOSE_Y = WIFI_PANEL_Y + 8;
 static const int WIFI_CLOSE_W = 24;
 static const int WIFI_CLOSE_H = 22;
-static const int WIFI_ROW_START_Y = WIFI_PANEL_Y + 42;
-static const int WIFI_ROW_GAP = 31;
+static const int WIFI_ROW_START_Y = WIFI_PANEL_Y + 36;
+static const int WIFI_ROW_GAP = 26;
 static const int WIFI_ROW_H = 22;
 static const int WIFI_LABEL_X = WIFI_PANEL_X + 14;
 static const int WIFI_VALUE_RIGHT_X = WIFI_PANEL_X + 198;
@@ -244,6 +248,12 @@ enum ClockDisplayStyle {
   CLOCK_STYLE_SMALL_TEXT,
   CLOCK_STYLE_ASCII,
   CLOCK_STYLE_COUNT
+};
+
+enum ClockTextMode {
+  CLOCK_TEXT_OFF,
+  CLOCK_TEXT_ALT,
+  CLOCK_TEXT_ONLY
 };
 
 enum ClockSmallPosition {
@@ -514,6 +524,28 @@ static const uint16_t kClockColorPalette[] = {
 };
 static constexpr int CLOCK_COLOR_COUNT = sizeof(kClockColorPalette) / sizeof(kClockColorPalette[0]);
 
+static const char* presetTexts[] = {
+    "Just keep swimming",
+    "Relax & breathe",
+    "Deep blue ocean",
+    "ASCII Aquarium",
+    "Zen Zone",
+    "Feed the fish!",
+    "Make a splash",
+    "Hello water world!"
+};
+static const char* presetShortTexts[] = {
+    "Swim",
+    "Relax",
+    "Ocean",
+    "Aquarium",
+    "Zen",
+    "Feed",
+    "Splash",
+    "Hello"
+};
+static constexpr int PRESET_TEXT_COUNT = sizeof(presetTexts) / sizeof(presetTexts[0]);
+
 static const AsciiClockGlyph kAsciiClockStandardGlyphs[] = {
     {'0', {"  ___", " / _ \\", "| | | |", "| |_| |", " \\___/", ""}},
     {'1', {" _", "/ |", "| |", "| |", "|_|", ""}},
@@ -527,9 +559,32 @@ static const AsciiClockGlyph kAsciiClockStandardGlyphs[] = {
     {'9', {"  ___", " / _ \\", "| (_) |", " \\__, |", "  /_/", ""}},
     {':', {" ", " _", "(_)", " _", "(_)", " "}},
     {' ', {" ", " ", " ", " ", " ", " "}},
-    {'a', {"", "  __ _", " / _` |", "| (_| |", " \\__,_|", ""}},
-    {'m', {"", " _ __ ___", "| '_ ` _ \\", "| | | | | |", "|_| |_| |_|", ""}},
-    {'p', {"", " _ __", "| '_ \\", "| |_) |", "| .__/", "|_|"}},
+    {'A', {"  ___  ", " / _ \\\\ ", "| |_| |", "|  _  |", "|_| |_|", ""}},
+    {'B', {" ____  ", "|  _ \\\\ ", "| _ <  ", "| |_| |", "|____/ ", ""}},
+    {'C', {"  ____ ", " / ___|", "| |    ", "| |___ ", " \\\\____|", ""}},
+    {'D', {" ____  ", "|  _ \\\\ ", "| | | |", "| |_| |", "|____/ ", ""}},
+    {'E', {" _____ ", "| ____|", "|  _|  ", "| |___ ", "|_____|", ""}},
+    {'F', {" _____ ", "|  ___|", "| |_   ", "|  _|  ", "|_|    ", ""}},
+    {'G', {"  ____ ", " / ___|", "| |  _ ", "| |_| |", " \\\\____|", ""}},
+    {'H', {" _   _ ", "| | | |", "| |_| |", "|  _  |", "|_| |_|", ""}},
+    {'I', {" ___ ", "|_ _|", " | | ", " | | ", "|___|", ""}},
+    {'J', {"   ___ ", "  |_ _|", "   | | ", " _ | | ", "|___/  ", ""}},
+    {'K', {" _  __ ", "| |/ / ", "| ' /  ", "| . \\\\  ", "|_|\\_\\ ", ""}},
+    {'L', {" _     ", "| |    ", "| |    ", "| |___ ", "|_____|", ""}},
+    {'M', {" __  __ ", "|  \\\\/  |", "| |\\\\/| |", "| |  | |", "|_|  |_|", ""}},
+    {'N', {" _   _ ", "| \\\\ | |", "|  \\\\| |", "| |\\\\  |", "|_| \\\\_|", ""}},
+    {'O', {"  ___  ", " / _ \\\\ ", "| | | |", "| |_| |", " \\\\___/ ", ""}},
+    {'P', {" ____  ", "|  _ \\\\ ", "| |_) |", "|  __/ ", "|_|    ", ""}},
+    {'Q', {"  ___  ", " / _ \\\\ ", "| | | |", "| |_| |", " \\\\__\\\\_|", ""}},
+    {'R', {" ____  ", "|  _ \\\\ ", "| |_) |", "|  _ < ", "|_| \\\\_|", ""}},
+    {'S', {" ____  ", "/ ___| ", "\\\\___ \\\\ ", " ___) |", "|____/ ", ""}},
+    {'T', {" _____ ", "|_   _|", "  | |  ", "  | |  ", "  |_|  ", ""}},
+    {'U', {" _   _ ", "| | | |", "| | | |", "| |_| |", " \\\\___/ ", ""}},
+    {'V', {" _   _ ", "| | | |", "| | | |", " \\\\ \\\\_/ ", "  \\\\_/  ", ""}},
+    {'W', {" _      _ ", "| |    | |", "| | /\\\\ | |", "| |/  \\\\| |", "|___/\\\\___|", ""}},
+    {'X', {"__  __", "\\\\ \\\\/ /", " \\\\  / ", " /  \\\\ ", "/_/\\\\_\\\\", ""}},
+    {'Y', {"__   __", "\\\\ \\\\ / /", " \\\\ V / ", "  | |  ", "  |_|  ", ""}},
+    {'Z', {" _____ ", "|_  _/ ", "  / /  ", " / /__ ", "/_____|", ""}}
 };
 
 static const size_t kFishGlyphBuf = 28;
@@ -659,6 +714,88 @@ int clockHour = DEFAULT_CLOCK_HOUR;
 int clockMinute = DEFAULT_CLOCK_MINUTE;
 unsigned long clockLastMinuteMs = 0;
 ClockField activeClockField = CLOCK_FIELD_HOUR;
+ClockTextMode clockTextMode = CLOCK_TEXT_OFF;
+int clockSelectedText = 0;
+char clockCustomText[12] = "hello";
+
+void copySafe(char* out, size_t outCap, const char* src);
+extern unsigned long aquariumNowMs;
+
+// ------------------------------ API Endpoint Fetching -----------------------
+char apiEndpoint[128] = "";
+char apiResponseText[32] = "NO DATA";
+bool apiFetchInProgress = false;
+unsigned long apiLastFetchMs = 0;
+
+float getClockFadeFactor() {
+  if (clockTextMode != CLOCK_TEXT_ALT) return 1.0f;
+  unsigned long offset = aquariumNowMs % 10000UL;
+  if (offset < 1000UL) {
+    return (float)offset / 1000.0f;
+  } else if (offset > 9000UL) {
+    return (float)(10000UL - offset) / 1000.0f;
+  }
+  return 1.0f;
+}
+
+void fetchEndpointTask(void* pvParameters) {
+  (void)pvParameters;
+  if (WiFi.status() == WL_CONNECTED && apiEndpoint[0] != '\0') {
+    WiFiClient client;
+    HTTPClient http;
+    http.begin(client, apiEndpoint);
+    http.setTimeout(8000);
+    int httpCode = http.GET();
+    if (httpCode == HTTP_CODE_OK) {
+      String payload = http.getString();
+      payload.trim();
+      String cleanPayload = "";
+      for (size_t i = 0; i < payload.length() && cleanPayload.length() < 24; ++i) {
+        char c = payload[i];
+        if (c >= 32 && c <= 126) {
+          cleanPayload += c;
+        }
+      }
+      copySafe(apiResponseText, sizeof(apiResponseText), cleanPayload.c_str());
+    } else {
+      snprintf(apiResponseText, sizeof(apiResponseText), "HTTP ERR %d", httpCode);
+    }
+    http.end();
+  } else {
+    if (apiEndpoint[0] == '\0') {
+      copySafe(apiResponseText, sizeof(apiResponseText), "NO ENDPOINT");
+    } else {
+      copySafe(apiResponseText, sizeof(apiResponseText), "WIFI OFF");
+    }
+  }
+  apiFetchInProgress = false;
+  vTaskDelete(NULL);
+}
+
+void triggerApiFetch() {
+  if (apiFetchInProgress) return;
+  apiFetchInProgress = true;
+  apiLastFetchMs = millis();
+  xTaskCreatePinnedToCore(
+      fetchEndpointTask,
+      "fetchEndpointTask",
+      4096,
+      NULL,
+      1,
+      NULL,
+      0
+  );
+}
+
+bool keyboardOpen = false;
+char keyboardBuffer[128] = "";
+int keyboardMaxLen = 64;
+enum KeyboardTarget {
+  KEYBOARD_TARGET_WIFI,
+  KEYBOARD_TARGET_CLOCK_TEXT,
+  KEYBOARD_TARGET_ENDPOINT
+};
+KeyboardTarget keyboardTarget = KEYBOARD_TARGET_WIFI;
 
 bool wifiPanelOpen = false;
 WifiPanelMode wifiPanelMode = WIFI_PANEL_MAIN;
@@ -1344,6 +1481,7 @@ void formatClockTimeOnly(char* out, size_t outCap, bool includeMeridiem) {
 }
 
 const AsciiClockGlyph& asciiClockGlyphFor(char c) {
+  if (c >= 'a' && c <= 'z') c = c - 'a' + 'A';
   for (size_t i = 0; i < sizeof(kAsciiClockStandardGlyphs) / sizeof(kAsciiClockStandardGlyphs[0]); ++i) {
     if (kAsciiClockStandardGlyphs[i].c == c) return kAsciiClockStandardGlyphs[i];
   }
@@ -1601,7 +1739,7 @@ static bool pixelFlowerGeometryDirty = true;
 
 void savePersistentState() {
   prefs.begin("ascii-aq", false);
-  prefs.putUChar("ver", 3);
+  prefs.putUChar("ver", 5);
   prefs.putInt("fish", fishTargetCount);
   prefs.putInt("bubbles", bubbleTargetCount);
   prefs.putInt("oct_freq", octopusFrequency);
@@ -1628,6 +1766,10 @@ void savePersistentState() {
   prefs.putString("wifi_ssid", wifiSsid);
   prefs.putString("wifi_pass", wifiPass);
   prefs.putBytes("flowers", pixelFlowers, sizeof(pixelFlowers));
+  prefs.putUChar("clk_txt_mode", (uint8_t)clockTextMode);
+  prefs.putInt("clk_sel_txt", clockSelectedText);
+  prefs.putString("clk_cust_txt", clockCustomText);
+  prefs.putString("api_end", apiEndpoint);
   prefs.end();
   settingsDirty = false;
   lastSettingsSaveMs = millis();
@@ -1673,6 +1815,24 @@ void loadPersistentState() {
     if (flowerBytes == sizeof(pixelFlowers)) {
       prefs.getBytes("flowers", pixelFlowers, sizeof(pixelFlowers));
     }
+    if (version >= 5) {
+      clockTextMode = (ClockTextMode)prefs.getUChar("clk_txt_mode", (uint8_t)CLOCK_TEXT_OFF);
+      clockSelectedText = prefs.getInt("clk_sel_txt", 0);
+      prefs.getString("clk_cust_txt", clockCustomText, sizeof(clockCustomText));
+      prefs.getString("api_end", apiEndpoint, sizeof(apiEndpoint));
+    } else if (version == 4) {
+      clockTextMode = (ClockTextMode)prefs.getUChar("clk_txt_mode", (uint8_t)CLOCK_TEXT_OFF);
+      clockSelectedText = prefs.getInt("clk_sel_txt", 0);
+      prefs.getString("clk_cust_txt", clockCustomText, sizeof(clockCustomText));
+      apiEndpoint[0] = '\0';
+    } else {
+      clockTextMode = CLOCK_TEXT_OFF;
+      clockSelectedText = 0;
+      copySafe(clockCustomText, sizeof(clockCustomText), "hello");
+      apiEndpoint[0] = '\0';
+    }
+    if ((int)clockTextMode < 0 || clockTextMode > CLOCK_TEXT_ONLY) clockTextMode = CLOCK_TEXT_OFF;
+    clockSelectedText = clampVal(clockSelectedText, 0, PRESET_TEXT_COUNT + 2);
   }
   prefs.end();
 
@@ -1903,6 +2063,7 @@ void serviceWifi(unsigned long now) {
       beginInternetTimeSync();
       setWifiStatus("Connected");
       savePersistentState();
+      triggerApiFetch();
     }
     serviceInternetTime(now);
     return;
@@ -2831,12 +2992,18 @@ void drawSeahorse(TFT_eSprite& s) {
   s.setTextFont(2);
 }
 
-void drawAsciiClockBackground(TFT_eSprite& s) {
-  if (!clockVisible || clockDisplayStyle != CLOCK_STYLE_ASCII) return;
+void drawAsciiTextInBackground(TFT_eSprite& s, const char* text) {
+  char upperText[16];
+  size_t len = strlen(text);
+  if (len >= sizeof(upperText)) len = sizeof(upperText) - 1;
+  for (size_t i = 0; i < len; ++i) {
+    char c = text[i];
+    if (c >= 'a' && c <= 'z') c = c - 'a' + 'A';
+    upperText[i] = c;
+  }
+  upperText[len] = '\0';
 
-  char timeText[16];
-  formatClockTimeOnly(timeText, sizeof(timeText), false);
-  int artCols = asciiClockTextCols(timeText);
+  int artCols = asciiClockTextCols(upperText);
   int artPixelW = artCols * ASCII_CLOCK_CHAR_W;
   int x = (SCREEN_W - artPixelW) / 2;
   if (x < 0) x = 0;
@@ -2845,15 +3012,16 @@ void drawAsciiClockBackground(TFT_eSprite& s) {
   s.setTextFont(1);
   s.setTextSize(1);
   s.setTextDatum(TL_DATUM);
-  s.setTextColor(clockAsciiTextColor);
+  uint16_t fadedColor = scaleRgb565(clockAsciiTextColor, getClockFadeFactor());
+  s.setTextColor(fadedColor);
 
   for (int row = 0; row < ASCII_CLOCK_ROWS; ++row) {
-    char rowBuf[96] = "";
-    for (size_t i = 0; timeText[i] != '\0'; ++i) {
+    char rowBuf[128] = "";
+    for (size_t i = 0; upperText[i] != '\0'; ++i) {
       if (i > 0) {
         for (int gap = 0; gap < ASCII_CLOCK_GLYPH_GAP; ++gap) appendCharSafe(rowBuf, sizeof(rowBuf), ' ');
       }
-      appendAsciiClockGlyphRow(rowBuf, sizeof(rowBuf), asciiClockGlyphFor(timeText[i]), row);
+      appendAsciiClockGlyphRow(rowBuf, sizeof(rowBuf), asciiClockGlyphFor(upperText[i]), row);
     }
     if (clockFlipHorizontal) {
       mirrorClockTextInPlace(rowBuf);
@@ -2861,8 +3029,41 @@ void drawAsciiClockBackground(TFT_eSprite& s) {
     trimTrailingSpaces(rowBuf);
     if (rowBuf[0] != '\0') s.drawString(rowBuf, x, y + row * ASCII_CLOCK_ROW_H);
   }
-
   s.setTextFont(2);
+}
+
+void drawAsciiClockBackground(TFT_eSprite& s) {
+  if (!clockVisible || clockDisplayStyle != CLOCK_STYLE_ASCII) return;
+
+  bool showClockNow = true;
+  if (clockTextMode == CLOCK_TEXT_ONLY) {
+    showClockNow = false;
+  } else if (clockTextMode == CLOCK_TEXT_ALT) {
+    showClockNow = ((aquariumNowMs / 10000UL) % 2 == 0);
+  }
+
+  if (showClockNow) {
+    char timeText[16];
+    formatClockTimeOnly(timeText, sizeof(timeText), false);
+    drawAsciiTextInBackground(s, timeText);
+  } else {
+    int textIndex = 0;
+    if (clockSelectedText == 0) {
+      textIndex = (aquariumNowMs / 20000UL) % PRESET_TEXT_COUNT;
+    } else {
+      textIndex = (clockSelectedText - 1) % PRESET_TEXT_COUNT;
+    }
+    
+    const char* currentText = "";
+    if (clockSelectedText > 0 && clockSelectedText <= PRESET_TEXT_COUNT) {
+      currentText = presetTexts[textIndex];
+    } else if (clockSelectedText == PRESET_TEXT_COUNT + 1) {
+      currentText = clockCustomText;
+    } else if (clockSelectedText == PRESET_TEXT_COUNT + 2) {
+      currentText = apiResponseText[0] ? apiResponseText : "NO DATA";
+    }
+    drawAsciiTextInBackground(s, currentText);
+  }
 }
 
 void drawMirroredSmallClock(TFT_eSprite& s, const char* line, int y) {
@@ -2871,6 +3072,8 @@ void drawMirroredSmallClock(TFT_eSprite& s, const char* line, int y) {
     copySafe(fallback, sizeof(fallback), line);
     mirrorClockTextInPlace(fallback);
     s.setTextDatum(TC_DATUM);
+    uint16_t fadedColor = scaleRgb565(clockSmallTextColor, getClockFadeFactor());
+    s.setTextColor(fadedColor);
     s.drawString(fallback, SCREEN_W / 2, y);
     return;
   }
@@ -2880,7 +3083,8 @@ void drawMirroredSmallClock(TFT_eSprite& s, const char* line, int y) {
   clockFlipSprite.setTextDatum(TL_DATUM);
   clockFlipSprite.fillSprite(CLOCK_FLIP_TRANSPARENT);
   uint16_t transparentKey = clockFlipSprite.readPixel(0, CLOCK_FLIP_SPRITE_H - 1);
-  clockFlipSprite.setTextColor(clockSmallTextColor, CLOCK_FLIP_TRANSPARENT);
+  uint16_t fadedColor = scaleRgb565(clockSmallTextColor, getClockFadeFactor());
+  clockFlipSprite.setTextColor(fadedColor, CLOCK_FLIP_TRANSPARENT);
   clockFlipSprite.drawString(line, 0, 0);
 
   int textW = clockFlipSprite.textWidth(line);
@@ -2902,16 +3106,54 @@ void drawMirroredSmallClock(TFT_eSprite& s, const char* line, int y) {
 
 void drawClock(TFT_eSprite& s) {
   if (!clockVisible || clockDisplayStyle != CLOCK_STYLE_SMALL_TEXT) return;
-  char line[32];
-  formatClockDisplay(line, sizeof(line));
-  s.setTextSize(1);
-  s.setTextDatum(TC_DATUM);
-  s.setTextColor(clockSmallTextColor);
+
+  bool showClockNow = true;
+  if (clockTextMode == CLOCK_TEXT_ONLY) {
+    showClockNow = false;
+  } else if (clockTextMode == CLOCK_TEXT_ALT) {
+    showClockNow = ((aquariumNowMs / 10000UL) % 2 == 0);
+  }
+
   int y = (clockSmallPosition == CLOCK_SMALL_TOP) ? 4 : (SCREEN_H - 18);
-  if (clockFlipHorizontal) {
-    drawMirroredSmallClock(s, line, y);
+
+  if (showClockNow) {
+    char line[32];
+    formatClockDisplay(line, sizeof(line));
+    s.setTextSize(1);
+    s.setTextDatum(TC_DATUM);
+    uint16_t fadedColor = scaleRgb565(clockSmallTextColor, getClockFadeFactor());
+    s.setTextColor(fadedColor);
+    if (clockFlipHorizontal) {
+      drawMirroredSmallClock(s, line, y);
+    } else {
+      s.drawString(line, SCREEN_W / 2, y);
+    }
   } else {
-    s.drawString(line, SCREEN_W / 2, y);
+    int textIndex = 0;
+    if (clockSelectedText == 0) {
+      textIndex = (aquariumNowMs / 20000UL) % PRESET_TEXT_COUNT;
+    } else {
+      textIndex = (clockSelectedText - 1) % PRESET_TEXT_COUNT;
+    }
+    
+    const char* currentText = "";
+    if (clockSelectedText > 0 && clockSelectedText <= PRESET_TEXT_COUNT) {
+      currentText = presetTexts[textIndex];
+    } else if (clockSelectedText == PRESET_TEXT_COUNT + 1) {
+      currentText = clockCustomText;
+    } else if (clockSelectedText == PRESET_TEXT_COUNT + 2) {
+      currentText = apiResponseText[0] ? apiResponseText : "NO DATA";
+    }
+
+    s.setTextSize(1);
+    s.setTextDatum(TC_DATUM);
+    uint16_t fadedColor = scaleRgb565(clockSmallTextColor, getClockFadeFactor());
+    s.setTextColor(fadedColor);
+    if (clockFlipHorizontal) {
+      drawMirroredSmallClock(s, currentText, y);
+    } else {
+      s.drawString(currentText, SCREEN_W / 2, y);
+    }
   }
 }
 
@@ -3111,6 +3353,7 @@ void drawWifiMainPanel(TFT_eSprite& s) {
   drawWifiStatusRow(s, WIFI_ROW_START_Y + WIFI_ROW_GAP * 2, "Status", wifiStatusText);
   drawWifiStatusRow(s, WIFI_ROW_START_Y + WIFI_ROW_GAP * 3, "Time", internetTimeStatus());
   drawWifiStepRow(s, WIFI_ROW_START_Y + WIFI_ROW_GAP * 4, "Timezone", currentTimezone().label);
+  drawWifiActionRow(s, WIFI_ROW_START_Y + WIFI_ROW_GAP * 5, "Endpoint", apiEndpoint[0] ? apiEndpoint : "(none)", "Edit");
 }
 
 void drawWifiNetworksPanel(TFT_eSprite& s) {
@@ -3156,32 +3399,50 @@ void drawWifiNetworksPanel(TFT_eSprite& s) {
   drawButton(s, WIFI_PANEL_X + 246, bottomY, 54, 22, "Next", TFT_CYAN, TFT_DARKGREEN);
 }
 
-void drawWifiPasswordPanel(TFT_eSprite& s) {
-  char title[42];
-  char ssidShort[22];
-  char passShort[34];
-  formatShortText(ssidShort, sizeof(ssidShort), pendingWifiSsid, 15);
-  formatShortText(passShort, sizeof(passShort), wifiPasswordBuffer, 29);
-  snprintf(title, sizeof(title), "WiFi Password: %s", ssidShort);
+void drawKeyboardPanel(TFT_eSprite& s) {
+  if (!keyboardOpen) return;
 
-  drawWifiPanelBase(s, title);
+  char title[42];
+  char valShort[34];
+  if (keyboardTarget == KEYBOARD_TARGET_WIFI) {
+    char ssidShort[22];
+    formatShortText(ssidShort, sizeof(ssidShort), pendingWifiSsid, 15);
+    snprintf(title, sizeof(title), "WiFi Password: %s", ssidShort);
+    formatShortText(valShort, sizeof(valShort), keyboardBuffer, 29);
+  } else if (keyboardTarget == KEYBOARD_TARGET_CLOCK_TEXT) {
+    snprintf(title, sizeof(title), "Edit Custom Text");
+    formatShortText(valShort, sizeof(valShort), keyboardBuffer, 29);
+  } else {
+    snprintf(title, sizeof(title), "Edit API Endpoint");
+    formatShortText(valShort, sizeof(valShort), keyboardBuffer, 29);
+  }
+
+  s.fillRoundRect(WIFI_PANEL_X, WIFI_PANEL_Y, WIFI_PANEL_W, WIFI_PANEL_H, 8, TFT_NAVY);
+  s.drawRoundRect(WIFI_PANEL_X, WIFI_PANEL_Y, WIFI_PANEL_W, WIFI_PANEL_H, 8, TFT_CYAN);
+  s.setTextSize(1);
+  s.setTextDatum(TL_DATUM);
+  s.setTextColor(TFT_WHITE, TFT_NAVY);
+  s.drawString(title, WIFI_PANEL_X + 10, WIFI_PANEL_Y + 10);
+  drawButton(s, WIFI_CLOSE_X, WIFI_CLOSE_Y, WIFI_CLOSE_W, WIFI_CLOSE_H, "X", TFT_WHITE, TFT_RED);
+
   s.setTextDatum(TL_DATUM);
   s.fillRoundRect(WIFI_PANEL_X + 12, WIFI_PANEL_Y + 35, WIFI_PANEL_W - 24, 22, 4, TFT_BLACK);
   s.drawRoundRect(WIFI_PANEL_X + 12, WIFI_PANEL_Y + 35, WIFI_PANEL_W - 24, 22, 4, TFT_CYAN);
   s.setTextColor(TFT_GREENYELLOW, TFT_BLACK);
-  s.drawString(passShort[0] ? passShort : "password", WIFI_PANEL_X + 18, WIFI_PANEL_Y + 39);
+  
+  const char* placeholder = (keyboardTarget == KEYBOARD_TARGET_WIFI) ? "password" : ((keyboardTarget == KEYBOARD_TARGET_CLOCK_TEXT) ? "enter text" : "enter url");
+  s.drawString(valShort[0] ? valShort : placeholder, WIFI_PANEL_X + 18, WIFI_PANEL_Y + 39);
 
   drawKeyboardKeys(s);
   drawButton(s, WIFI_PANEL_X + 18, WIFI_KEYBOARD_ACTION_Y, 76, 22, "Cancel", TFT_CYAN, TFT_DARKGREEN);
-  drawButton(s, WIFI_PANEL_X + 226, WIFI_KEYBOARD_ACTION_Y, 76, 22, "Join", TFT_CYAN, TFT_DARKGREEN);
+  const char* actionLabel = (keyboardTarget == KEYBOARD_TARGET_WIFI) ? "Join" : "Save";
+  drawButton(s, WIFI_PANEL_X + 226, WIFI_KEYBOARD_ACTION_Y, 76, 22, actionLabel, TFT_CYAN, TFT_DARKGREEN);
 }
 
 void drawWifiPanel(TFT_eSprite& s) {
   if (!wifiPanelOpen) return;
   if (wifiPanelMode == WIFI_PANEL_NETWORKS) {
     drawWifiNetworksPanel(s);
-  } else if (wifiPanelMode == WIFI_PANEL_PASSWORD) {
-    drawWifiPasswordPanel(s);
   } else {
     drawWifiMainPanel(s);
   }
@@ -3294,18 +3555,33 @@ void drawClockStyleChoiceRow(TFT_eSprite& s, int rowY, const char* label, const 
              rightActive ? TFT_NAVY : TFT_WHITE, rightActive ? TFT_CYAN : TFT_DARKGREEN);
 }
 
-void drawClockStyleColorRow(TFT_eSprite& s) {
-  const int centerY = CLOCK_STYLE_ROW_4_Y + SETTINGS_BUTTON_H / 2;
+void drawClockStyleColorRow(TFT_eSprite& s, int rowY) {
+  const int centerY = rowY + SETTINGS_BUTTON_H / 2;
   s.setTextDatum(ML_DATUM);
   s.setTextColor(TFT_WHITE, TFT_NAVY);
   s.drawString("Colour", CLOCK_STYLE_LABEL_X, centerY);
 
   uint16_t color = activeClockTextColor();
-  s.fillRoundRect(CLOCK_STYLE_SWATCH_X, CLOCK_STYLE_ROW_4_Y + 3, CLOCK_STYLE_SWATCH_W, SETTINGS_BUTTON_H - 6, 3, color);
-  s.drawRoundRect(CLOCK_STYLE_SWATCH_X, CLOCK_STYLE_ROW_4_Y + 3, CLOCK_STYLE_SWATCH_W, SETTINGS_BUTTON_H - 6, 3,
+  s.fillRoundRect(CLOCK_STYLE_SWATCH_X, rowY + 3, CLOCK_STYLE_SWATCH_W, SETTINGS_BUTTON_H - 6, 3, color);
+  s.drawRoundRect(CLOCK_STYLE_SWATCH_X, rowY + 3, CLOCK_STYLE_SWATCH_W, SETTINGS_BUTTON_H - 6, 3,
                   color == TFT_WHITE ? TFT_DARKGREY : TFT_WHITE);
-  drawButton(s, CLOCK_STYLE_COLOR_BUTTON_X, CLOCK_STYLE_ROW_4_Y, CLOCK_STYLE_COLOR_BUTTON_W, SETTINGS_BUTTON_H,
+  drawButton(s, CLOCK_STYLE_COLOR_BUTTON_X, rowY, CLOCK_STYLE_COLOR_BUTTON_W, SETTINGS_BUTTON_H,
              "Pick", clockColorPanelOpen ? TFT_NAVY : TFT_CYAN, clockColorPanelOpen ? TFT_CYAN : TFT_DARKGREEN);
+}
+
+void drawClockStyleRow(TFT_eSprite& s, int rowY, const char* label, const char* value) {
+  const int controlY = rowY;
+  const int centerY = controlY + SETTINGS_BUTTON_H / 2;
+  s.setTextDatum(ML_DATUM);
+  s.setTextColor(TFT_WHITE, TFT_NAVY);
+  s.drawString(label, CLOCK_STYLE_LABEL_X, centerY);
+
+  s.setTextDatum(MR_DATUM);
+  s.setTextColor(TFT_GREENYELLOW, TFT_NAVY);
+  s.drawString(value, SETTINGS_VALUE_RIGHT_X, centerY);
+
+  drawButton(s, SETTINGS_MINUS_X, controlY, SETTINGS_BUTTON_W, SETTINGS_BUTTON_H, "-", TFT_WHITE, TFT_DARKGREEN);
+  drawButton(s, SETTINGS_PLUS_X, controlY, SETTINGS_BUTTON_W, SETTINGS_BUTTON_H, "+", TFT_WHITE, TFT_DARKGREEN);
 }
 
 void drawClockColorPanel(TFT_eSprite& s) {
@@ -3365,7 +3641,33 @@ void drawClockStylePanel(TFT_eSprite& s) {
 
   drawClockStyleChoiceRow(s, CLOCK_STYLE_ROW_3_Y, "Flip Clock", "Off", "On",
                           !clockFlipHorizontal, clockFlipHorizontal);
-  drawClockStyleColorRow(s);
+
+  const char* modeStr = "Off";
+  if (clockTextMode == CLOCK_TEXT_ALT) modeStr = "Alt";
+  else if (clockTextMode == CLOCK_TEXT_ONLY) modeStr = "Only";
+  drawClockStyleRow(s, CLOCK_STYLE_ROW_4_Y, "Text Mode", modeStr);
+
+  int nextRowY = CLOCK_STYLE_ROW_5_Y;
+  if (clockTextMode != CLOCK_TEXT_OFF) {
+    const char* msgStr = "Rotate";
+    if (clockSelectedText > 0 && clockSelectedText <= PRESET_TEXT_COUNT) {
+      msgStr = presetShortTexts[clockSelectedText - 1];
+    } else if (clockSelectedText == PRESET_TEXT_COUNT + 1) {
+      msgStr = "Custom";
+    } else if (clockSelectedText == PRESET_TEXT_COUNT + 2) {
+      msgStr = "API Data";
+    }
+    drawClockStyleRow(s, CLOCK_STYLE_ROW_5_Y, "Message", msgStr);
+    
+    if (clockSelectedText == PRESET_TEXT_COUNT + 1) {
+      drawActionRow(s, CLOCK_STYLE_ROW_6_Y, "Edit Text", clockCustomText[0] ? clockCustomText : "(none)");
+      nextRowY = CLOCK_STYLE_ROW_6_Y + 26;
+    } else {
+      nextRowY = CLOCK_STYLE_ROW_6_Y;
+    }
+  }
+
+  drawClockStyleColorRow(s, nextRowY);
   drawButton(s, CLOCK_STYLE_CLOSE_X, CLOCK_STYLE_CLOSE_Y, CLOCK_STYLE_CLOSE_W, CLOCK_STYLE_CLOSE_H, "X", TFT_WHITE, TFT_RED);
 }
 
@@ -3441,6 +3743,9 @@ void renderFrame() {
   drawClockStylePanel(canvas);
   drawClockColorPanel(canvas);
   drawWifiPanel(canvas);
+  if (keyboardOpen) {
+    drawKeyboardPanel(canvas);
+  }
   serviceCaptureAfterDraw(canvas);
   drawCapturePanel(canvas);
   drawCaptureToast(canvas);
@@ -3452,7 +3757,16 @@ bool inside(int x, int y, int rx, int ry, int rw, int rh) {
   return (x >= rx && x < rx + rw && y >= ry && y < ry + rh);
 }
 
-void handleWifiPasswordTouch(int x, int y) {
+void handleKeyboardTouch(int x, int y) {
+  if (inside(x, y, WIFI_CLOSE_X, WIFI_CLOSE_Y, WIFI_CLOSE_W, WIFI_CLOSE_H) ||
+      inside(x, y, WIFI_PANEL_X + 18, WIFI_KEYBOARD_ACTION_Y, 76, 22)) {
+    keyboardOpen = false;
+    if (keyboardTarget == KEYBOARD_TARGET_WIFI) {
+      wifiPanelMode = WIFI_PANEL_NETWORKS;
+    }
+    return;
+  }
+
   for (int row = 0; row < 4; ++row) {
     const char* keys = keyboardRowText(row);
     int keyCount = strlen(keys);
@@ -3460,7 +3774,7 @@ void handleWifiPasswordTouch(int x, int y) {
       int keyX, keyY, keyW, keyH;
       keyboardKeyBounds(row, i, keyX, keyY, keyW, keyH);
       if (inside(x, y, keyX, keyY, keyW, keyH)) {
-        appendCharSafe(wifiPasswordBuffer, sizeof(wifiPasswordBuffer), keys[i]);
+        appendCharSafe(keyboardBuffer, keyboardMaxLen + 1, keys[i]);
         return;
       }
     }
@@ -3475,21 +3789,27 @@ void handleWifiPasswordTouch(int x, int y) {
     return;
   }
   if (inside(x, y, WIFI_PANEL_X + 138, WIFI_KEYBOARD_SPECIAL_Y, 86, 22)) {
-    appendCharSafe(wifiPasswordBuffer, sizeof(wifiPasswordBuffer), ' ');
+    appendCharSafe(keyboardBuffer, keyboardMaxLen + 1, ' ');
     return;
   }
   if (inside(x, y, WIFI_PANEL_X + 232, WIFI_KEYBOARD_SPECIAL_Y, 56, 22)) {
-    removeLastChar(wifiPasswordBuffer);
+    removeLastChar(keyboardBuffer);
     return;
   }
-  if (inside(x, y, WIFI_PANEL_X + 18, WIFI_KEYBOARD_ACTION_Y, 76, 22)) {
-    wifiPanelMode = WIFI_PANEL_NETWORKS;
-    wifiPasswordBuffer[0] = '\0';
-    return;
-  }
+
   if (inside(x, y, WIFI_PANEL_X + 226, WIFI_KEYBOARD_ACTION_Y, 76, 22)) {
-    startWifiConnect(pendingWifiSsid, wifiPasswordBuffer, true);
-    wifiPanelMode = WIFI_PANEL_MAIN;
+    if (keyboardTarget == KEYBOARD_TARGET_WIFI) {
+      startWifiConnect(pendingWifiSsid, keyboardBuffer, true);
+      wifiPanelMode = WIFI_PANEL_MAIN;
+    } else if (keyboardTarget == KEYBOARD_TARGET_CLOCK_TEXT) {
+      copySafe(clockCustomText, sizeof(clockCustomText), keyboardBuffer);
+      savePersistentState();
+    } else if (keyboardTarget == KEYBOARD_TARGET_ENDPOINT) {
+      copySafe(apiEndpoint, sizeof(apiEndpoint), keyboardBuffer);
+      savePersistentState();
+      triggerApiFetch();
+    }
+    keyboardOpen = false;
     return;
   }
 }
@@ -3527,13 +3847,16 @@ void handleWifiNetworksTouch(int x, int y) {
   if (index < 0 || index >= wifiNetworkCount) return;
 
   copySafe(pendingWifiSsid, sizeof(pendingWifiSsid), wifiNetworkNames[index]);
-  wifiPasswordBuffer[0] = '\0';
+  keyboardBuffer[0] = '\0';
   keyboardMode = KEYBOARD_LOWER;
   if (wifiNetworkOpen[index]) {
     startWifiConnect(pendingWifiSsid, "", true);
     wifiPanelMode = WIFI_PANEL_MAIN;
   } else {
-    wifiPanelMode = WIFI_PANEL_PASSWORD;
+    keyboardTarget = KEYBOARD_TARGET_WIFI;
+    keyboardMaxLen = 64;
+    copySafe(keyboardBuffer, sizeof(keyboardBuffer), wifiPass);
+    keyboardOpen = true;
   }
 }
 
@@ -3565,6 +3888,17 @@ void handleWifiMainTouch(int x, int y) {
     cycleTimezone(1);
     return;
   }
+
+  int endpointY = WIFI_ROW_START_Y + WIFI_ROW_GAP * 5;
+  if (inside(x, y, WIFI_ACTION_X, endpointY, WIFI_ACTION_W, WIFI_ROW_H) ||
+      inside(x, y, WIFI_LABEL_X, endpointY, WIFI_PANEL_W - 28, WIFI_ROW_H)) {
+    keyboardTarget = KEYBOARD_TARGET_ENDPOINT;
+    keyboardMaxLen = 127;
+    copySafe(keyboardBuffer, sizeof(keyboardBuffer), apiEndpoint);
+    keyboardMode = KEYBOARD_LOWER;
+    keyboardOpen = true;
+    return;
+  }
 }
 
 void handleWifiPanelTouch(int x, int y) {
@@ -3574,9 +3908,7 @@ void handleWifiPanelTouch(int x, int y) {
     return;
   }
 
-  if (wifiPanelMode == WIFI_PANEL_PASSWORD) {
-    handleWifiPasswordTouch(x, y);
-  } else if (wifiPanelMode == WIFI_PANEL_NETWORKS) {
+  if (wifiPanelMode == WIFI_PANEL_NETWORKS) {
     handleWifiNetworksTouch(x, y);
   } else {
     handleWifiMainTouch(x, y);
@@ -3640,8 +3972,61 @@ void handleClockStylePanelTouch(int x, int y) {
     return;
   }
 
-  if (inside(x, y, CLOCK_STYLE_SWATCH_X, CLOCK_STYLE_ROW_4_Y, CLOCK_STYLE_SWATCH_W, SETTINGS_BUTTON_H) ||
-      inside(x, y, CLOCK_STYLE_COLOR_BUTTON_X, CLOCK_STYLE_ROW_4_Y, CLOCK_STYLE_COLOR_BUTTON_W, SETTINGS_BUTTON_H)) {
+  // Row 4: Text Mode Minus / Plus
+  if (inside(x, y, SETTINGS_MINUS_X, CLOCK_STYLE_ROW_4_Y, SETTINGS_BUTTON_W, SETTINGS_BUTTON_H)) {
+    int m = (int)clockTextMode - 1;
+    if (m < 0) m = 2;
+    clockTextMode = (ClockTextMode)m;
+    markSettingsDirty();
+    return;
+  }
+  if (inside(x, y, SETTINGS_PLUS_X, CLOCK_STYLE_ROW_4_Y, SETTINGS_BUTTON_W, SETTINGS_BUTTON_H)) {
+    int m = (int)clockTextMode + 1;
+    if (m > 2) m = 0;
+    clockTextMode = (ClockTextMode)m;
+    markSettingsDirty();
+    return;
+  }
+
+  // Row 5: Message Minus / Plus (only if Text Mode != Off)
+  if (clockTextMode != CLOCK_TEXT_OFF) {
+    if (inside(x, y, SETTINGS_MINUS_X, CLOCK_STYLE_ROW_5_Y, SETTINGS_BUTTON_W, SETTINGS_BUTTON_H)) {
+      clockSelectedText--;
+      if (clockSelectedText < 0) clockSelectedText = PRESET_TEXT_COUNT + 2;
+      markSettingsDirty();
+      return;
+    }
+    if (inside(x, y, SETTINGS_PLUS_X, CLOCK_STYLE_ROW_5_Y, SETTINGS_BUTTON_W, SETTINGS_BUTTON_H)) {
+      clockSelectedText++;
+      if (clockSelectedText > PRESET_TEXT_COUNT + 2) clockSelectedText = 0;
+      markSettingsDirty();
+      return;
+    }
+  }
+
+  // Row 6: Custom text Edit button (only if message is Custom)
+  if (clockTextMode != CLOCK_TEXT_OFF && clockSelectedText == PRESET_TEXT_COUNT + 1) {
+    if (inside(x, y, SETTINGS_ACTION_X, CLOCK_STYLE_ROW_6_Y, SETTINGS_ACTION_W, SETTINGS_BUTTON_H)) {
+      keyboardTarget = KEYBOARD_TARGET_CLOCK_TEXT;
+      keyboardMaxLen = 10;
+      copySafe(keyboardBuffer, sizeof(keyboardBuffer), clockCustomText);
+      keyboardMode = KEYBOARD_LOWER;
+      keyboardOpen = true;
+      return;
+    }
+  }
+
+  // Colour Row: Swatch or Pick button
+  int colorRowY = CLOCK_STYLE_ROW_5_Y;
+  if (clockTextMode != CLOCK_TEXT_OFF) {
+    if (clockSelectedText == PRESET_TEXT_COUNT + 1) {
+      colorRowY = CLOCK_STYLE_ROW_6_Y + 26;
+    } else {
+      colorRowY = CLOCK_STYLE_ROW_6_Y;
+    }
+  }
+  if (inside(x, y, CLOCK_STYLE_SWATCH_X, colorRowY, CLOCK_STYLE_SWATCH_W, SETTINGS_BUTTON_H) ||
+      inside(x, y, CLOCK_STYLE_COLOR_BUTTON_X, colorRowY, CLOCK_STYLE_COLOR_BUTTON_W, SETTINGS_BUTTON_H)) {
     clockColorPanelOpen = true;
     return;
   }
@@ -3692,6 +4077,11 @@ void processTouch() {
   int x, y;
   if (!readTouchPoint(x, y)) return;
   lastTouchMs = millis();
+
+  if (keyboardOpen) {
+    handleKeyboardTouch(x, y);
+    return;
+  }
 
   // Top-left: HUD toggle
   if (inside(x, y, 0, 0, 42, 26)) {
@@ -4000,8 +4390,9 @@ void processTouch() {
     return;
   }
 
-  // Feed interaction: tap anywhere else to spawn falling flake
+  // Feed interaction: tap anywhere else to spawn falling flake and force API fetch
   spawnFlake((float)x, (float)y);
+  triggerApiFetch();
 }
 
 // ------------------------------ Setup / Loop ---------------------------------
@@ -4112,6 +4503,12 @@ void loop() {
   updateOctopus(aquariumNowMs, dt);
   updateSeahorse(aquariumNowMs, dt);
   keepVisitorsSeparated();
+
+  // Auto-fetch API data every 10 minutes (600,000 ms) if WiFi is connected and endpoint is configured
+  if (wifiConnected && apiEndpoint[0] != '\0' && (apiLastFetchMs == 0 || now - apiLastFetchMs >= 600000UL)) {
+    triggerApiFetch();
+  }
+
   renderFrame();
 
   frameCount++;
