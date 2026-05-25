@@ -11,6 +11,7 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <WiFiClient.h>
+#include <WiFiClientSecure.h>
 #include <XPT2046_Touchscreen.h>
 #include <time.h>
 
@@ -192,8 +193,8 @@ static const int WIFI_CLOSE_X = WIFI_PANEL_X + WIFI_PANEL_W - 32;
 static const int WIFI_CLOSE_Y = WIFI_PANEL_Y + 8;
 static const int WIFI_CLOSE_W = 24;
 static const int WIFI_CLOSE_H = 22;
-static const int WIFI_ROW_START_Y = WIFI_PANEL_Y + 36;
-static const int WIFI_ROW_GAP = 26;
+static const int WIFI_ROW_START_Y = WIFI_PANEL_Y + 30;
+static const int WIFI_ROW_GAP = 24;
 static const int WIFI_ROW_H = 22;
 static const int WIFI_LABEL_X = WIFI_PANEL_X + 14;
 static const int WIFI_VALUE_RIGHT_X = WIFI_PANEL_X + 198;
@@ -740,14 +741,60 @@ float getClockFadeFactor() {
 
 void fetchEndpointTask(void* pvParameters) {
   (void)pvParameters;
+  Serial.println("--- API Fetch Task Started ---");
+  Serial.printf("Free heap at start: %u bytes\n", ESP.getFreeHeap());
+  Serial.printf("WiFi Status: %d (3 = Connected)\n", WiFi.status());
+  Serial.print("Fetching URL: ");
+  Serial.println(apiEndpoint);
+
   if (WiFi.status() == WL_CONNECTED && apiEndpoint[0] != '\0') {
-    WiFiClient client;
     HTTPClient http;
-    http.begin(client, apiEndpoint);
-    http.setTimeout(8000);
-    int httpCode = http.GET();
-    if (httpCode == HTTP_CODE_OK) {
-      String payload = http.getString();
+    bool success = false;
+    int httpCode = 0;
+    String payload = "";
+
+    if (strncmp(apiEndpoint, "https://", 8) == 0) {
+      Serial.println("URL is HTTPS. Initializing secure client...");
+      WiFiClientSecure client;
+      client.setInsecure(); // Disable SSL certificate verification
+      Serial.printf("Free heap before HTTPS begin: %u bytes\n", ESP.getFreeHeap());
+      http.begin(client, apiEndpoint);
+      http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
+      http.setTimeout(8000);
+      httpCode = http.GET();
+      Serial.printf("HTTPS GET response code: %d\n", httpCode);
+      if (httpCode == HTTP_CODE_OK) {
+        payload = http.getString();
+        success = true;
+        Serial.print("HTTPS payload: ");
+        Serial.println(payload);
+      } else {
+        Serial.print("HTTPS error detail: ");
+        Serial.println(http.errorToString(httpCode).c_str());
+      }
+      http.end();
+    } else {
+      Serial.println("URL is HTTP. Initializing standard client...");
+      WiFiClient client;
+      Serial.printf("Free heap before HTTP begin: %u bytes\n", ESP.getFreeHeap());
+      http.begin(client, apiEndpoint);
+      http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
+      http.setTimeout(8000);
+      httpCode = http.GET();
+      Serial.printf("HTTP GET response code: %d\n", httpCode);
+      if (httpCode == HTTP_CODE_OK) {
+        payload = http.getString();
+        success = true;
+        Serial.print("HTTP payload: ");
+        Serial.println(payload);
+      } else {
+        Serial.print("HTTP error detail: ");
+        Serial.println(http.errorToString(httpCode).c_str());
+      }
+      http.end();
+    }
+
+    if (success) {
       payload.trim();
       String cleanPayload = "";
       for (size_t i = 0; i < payload.length() && cleanPayload.length() < 24; ++i) {
@@ -757,17 +804,22 @@ void fetchEndpointTask(void* pvParameters) {
         }
       }
       copySafe(apiResponseText, sizeof(apiResponseText), cleanPayload.c_str());
+      Serial.print("Updated apiResponseText to: ");
+      Serial.println(apiResponseText);
     } else {
       snprintf(apiResponseText, sizeof(apiResponseText), "HTTP ERR %d", httpCode);
     }
-    http.end();
   } else {
     if (apiEndpoint[0] == '\0') {
       copySafe(apiResponseText, sizeof(apiResponseText), "NO ENDPOINT");
+      Serial.println("Fetch skipped: endpoint is empty");
     } else {
       copySafe(apiResponseText, sizeof(apiResponseText), "WIFI OFF");
+      Serial.println("Fetch skipped: WiFi is disconnected");
     }
   }
+  Serial.printf("Free heap at end: %u bytes\n", ESP.getFreeHeap());
+  Serial.println("--- API Fetch Task Finished ---");
   apiFetchInProgress = false;
   vTaskDelete(NULL);
 }
@@ -790,6 +842,7 @@ void triggerApiFetch() {
 bool keyboardOpen = false;
 char keyboardBuffer[128] = "";
 int keyboardMaxLen = 64;
+int keyboardCursorIdx = 0;
 enum KeyboardTarget {
   KEYBOARD_TARGET_WIFI,
   KEYBOARD_TARGET_CLOCK_TEXT,
@@ -912,6 +965,61 @@ void removeLastChar(char* out) {
   if (len > 0) out[len - 1] = '\0';
 }
 
+void insertCharCursor(char c) {
+  size_t len = strlen(keyboardBuffer);
+  if (len + 1 >= sizeof(keyboardBuffer) || (int)len >= keyboardMaxLen) return;
+  if (keyboardCursorIdx < 0) keyboardCursorIdx = 0;
+  if (keyboardCursorIdx > (int)len) keyboardCursorIdx = (int)len;
+
+  for (int i = len; i >= keyboardCursorIdx; --i) {
+    keyboardBuffer[i + 1] = keyboardBuffer[i];
+  }
+  keyboardBuffer[keyboardCursorIdx] = c;
+  keyboardCursorIdx++;
+}
+
+void deleteCharCursor() {
+  size_t len = strlen(keyboardBuffer);
+  if (keyboardCursorIdx <= 0 || keyboardCursorIdx > (int)len) return;
+
+  for (int i = keyboardCursorIdx; i <= (int)len; ++i) {
+    keyboardBuffer[i - 1] = keyboardBuffer[i];
+  }
+  keyboardCursorIdx--;
+}
+
+void formatCursorScrollText(char* out, size_t outCap, const char* src, int cursorPos, size_t maxChars) {
+  if (outCap == 0) return;
+  if (!src) src = "";
+  size_t len = strlen(src);
+  if (len <= maxChars) {
+    copySafe(out, outCap, src);
+    return;
+  }
+  
+  if (cursorPos < (int)maxChars - 3) {
+    size_t copyLen = maxChars - 3;
+    if (copyLen > len) copyLen = len;
+    strncpy(out, src, copyLen);
+    out[copyLen] = '\0';
+    strncat(out, "...", outCap - strlen(out) - 1);
+  } else if ((int)len - cursorPos < (int)maxChars - 3) {
+    size_t skip = len - (maxChars - 3);
+    snprintf(out, outCap, "...%s", src + skip);
+  } else {
+    int windowSize = maxChars - 6;
+    int start = cursorPos - windowSize / 2;
+    if (start < 0) start = 0;
+    char temp[64];
+    size_t copyLen = windowSize;
+    if (copyLen > len - start) copyLen = len - start;
+    strncpy(temp, src + start, copyLen);
+    temp[copyLen] = '\0';
+    snprintf(out, outCap, "...%s...", temp);
+  }
+}
+
+
 void formatShortText(char* out, size_t outCap, const char* src, size_t maxChars) {
   if (outCap == 0) return;
   if (!src) src = "";
@@ -930,6 +1038,18 @@ void formatShortText(char* out, size_t outCap, const char* src, size_t maxChars)
   strncpy(out, src, copyLen);
   out[copyLen] = '\0';
   strncat(out, "...", outCap - strlen(out) - 1);
+}
+
+void formatScrollText(char* out, size_t outCap, const char* src, size_t maxChars) {
+  if (outCap == 0) return;
+  if (!src) src = "";
+  size_t len = strlen(src);
+  if (len <= maxChars) {
+    copySafe(out, outCap, src);
+    return;
+  }
+  size_t skip = len - (maxChars - 3);
+  snprintf(out, outCap, "...%s", src + skip);
 }
 
 void markSettingsDirty() {
@@ -3404,17 +3524,35 @@ void drawKeyboardPanel(TFT_eSprite& s) {
 
   char title[42];
   char valShort[34];
+  
+  // Insert cursor character to create tempBuffer
+  char tempBuffer[136];
+  size_t len = strlen(keyboardBuffer);
+  int cursorIndex = keyboardCursorIdx;
+  if (cursorIndex < 0) cursorIndex = 0;
+  if (cursorIndex > (int)len) cursorIndex = (int)len;
+
+  int tempIdx = 0;
+  for (int i = 0; i < cursorIndex; ++i) {
+    tempBuffer[tempIdx++] = keyboardBuffer[i];
+  }
+  tempBuffer[tempIdx++] = '|';
+  for (int i = cursorIndex; i < (int)len; ++i) {
+    tempBuffer[tempIdx++] = keyboardBuffer[i];
+  }
+  tempBuffer[tempIdx] = '\0';
+
   if (keyboardTarget == KEYBOARD_TARGET_WIFI) {
     char ssidShort[22];
     formatShortText(ssidShort, sizeof(ssidShort), pendingWifiSsid, 15);
     snprintf(title, sizeof(title), "WiFi Password: %s", ssidShort);
-    formatShortText(valShort, sizeof(valShort), keyboardBuffer, 29);
+    formatCursorScrollText(valShort, sizeof(valShort), tempBuffer, cursorIndex, 29);
   } else if (keyboardTarget == KEYBOARD_TARGET_CLOCK_TEXT) {
     snprintf(title, sizeof(title), "Edit Custom Text");
-    formatShortText(valShort, sizeof(valShort), keyboardBuffer, 29);
+    formatCursorScrollText(valShort, sizeof(valShort), tempBuffer, cursorIndex, 29);
   } else {
     snprintf(title, sizeof(title), "Edit API Endpoint");
-    formatShortText(valShort, sizeof(valShort), keyboardBuffer, 29);
+    formatCursorScrollText(valShort, sizeof(valShort), tempBuffer, cursorIndex, 29);
   }
 
   s.fillRoundRect(WIFI_PANEL_X, WIFI_PANEL_Y, WIFI_PANEL_W, WIFI_PANEL_H, 8, TFT_NAVY);
@@ -3435,6 +3573,8 @@ void drawKeyboardPanel(TFT_eSprite& s) {
 
   drawKeyboardKeys(s);
   drawButton(s, WIFI_PANEL_X + 18, WIFI_KEYBOARD_ACTION_Y, 76, 22, "Cancel", TFT_CYAN, TFT_DARKGREEN);
+  drawButton(s, WIFI_PANEL_X + 114, WIFI_KEYBOARD_ACTION_Y, 36, 22, "<", TFT_CYAN, TFT_DARKGREEN);
+  drawButton(s, WIFI_PANEL_X + 170, WIFI_KEYBOARD_ACTION_Y, 36, 22, ">", TFT_CYAN, TFT_DARKGREEN);
   const char* actionLabel = (keyboardTarget == KEYBOARD_TARGET_WIFI) ? "Join" : "Save";
   drawButton(s, WIFI_PANEL_X + 226, WIFI_KEYBOARD_ACTION_Y, 76, 22, actionLabel, TFT_CYAN, TFT_DARKGREEN);
 }
@@ -3774,7 +3914,7 @@ void handleKeyboardTouch(int x, int y) {
       int keyX, keyY, keyW, keyH;
       keyboardKeyBounds(row, i, keyX, keyY, keyW, keyH);
       if (inside(x, y, keyX, keyY, keyW, keyH)) {
-        appendCharSafe(keyboardBuffer, keyboardMaxLen + 1, keys[i]);
+        insertCharCursor(keys[i]);
         return;
       }
     }
@@ -3789,11 +3929,24 @@ void handleKeyboardTouch(int x, int y) {
     return;
   }
   if (inside(x, y, WIFI_PANEL_X + 138, WIFI_KEYBOARD_SPECIAL_Y, 86, 22)) {
-    appendCharSafe(keyboardBuffer, keyboardMaxLen + 1, ' ');
+    insertCharCursor(' ');
     return;
   }
   if (inside(x, y, WIFI_PANEL_X + 232, WIFI_KEYBOARD_SPECIAL_Y, 56, 22)) {
-    removeLastChar(keyboardBuffer);
+    deleteCharCursor();
+    return;
+  }
+
+  if (inside(x, y, WIFI_PANEL_X + 114, WIFI_KEYBOARD_ACTION_Y, 36, 22)) {
+    if (keyboardCursorIdx > 0) {
+      keyboardCursorIdx--;
+    }
+    return;
+  }
+  if (inside(x, y, WIFI_PANEL_X + 170, WIFI_KEYBOARD_ACTION_Y, 36, 22)) {
+    if (keyboardCursorIdx < (int)strlen(keyboardBuffer)) {
+      keyboardCursorIdx++;
+    }
     return;
   }
 
@@ -3856,6 +4009,7 @@ void handleWifiNetworksTouch(int x, int y) {
     keyboardTarget = KEYBOARD_TARGET_WIFI;
     keyboardMaxLen = 64;
     copySafe(keyboardBuffer, sizeof(keyboardBuffer), wifiPass);
+    keyboardCursorIdx = strlen(keyboardBuffer);
     keyboardOpen = true;
   }
 }
@@ -3895,6 +4049,7 @@ void handleWifiMainTouch(int x, int y) {
     keyboardTarget = KEYBOARD_TARGET_ENDPOINT;
     keyboardMaxLen = 127;
     copySafe(keyboardBuffer, sizeof(keyboardBuffer), apiEndpoint);
+    keyboardCursorIdx = strlen(keyboardBuffer);
     keyboardMode = KEYBOARD_LOWER;
     keyboardOpen = true;
     return;
@@ -4010,6 +4165,7 @@ void handleClockStylePanelTouch(int x, int y) {
       keyboardTarget = KEYBOARD_TARGET_CLOCK_TEXT;
       keyboardMaxLen = 10;
       copySafe(keyboardBuffer, sizeof(keyboardBuffer), clockCustomText);
+      keyboardCursorIdx = strlen(keyboardBuffer);
       keyboardMode = KEYBOARD_LOWER;
       keyboardOpen = true;
       return;
